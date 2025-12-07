@@ -1,21 +1,153 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ref, push, onValue, set, serverTimestamp } from "firebase/database";
+import { ref, set, onValue, off } from "firebase/database";
 import { db } from "@/firebase/config";
-import { Send, Bot, User as UserIcon, Loader2, Copy, CheckCircle } from "lucide-react";
+import io from "socket.io-client";
+import { Send, Bot, User as UserIcon, Loader2, Copy, CheckCircle, Wifi, WifiOff } from "lucide-react";
+
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
 
 export default function GroupChat({ roomId }) {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [typingUsers, setTypingUsers] = useState({});
+  const [typingUser, setTypingUser] = useState(null);
   const [isSending, setIsSending] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  const [copiedRoomCode, setCopiedRoomCode] = useState(false);
+  const [joinNotification, setJoinNotification] = useState(null);
+  
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
-  const [copiedRoomCode, setCopiedRoomCode] = useState(false);
+  const socketRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
 
   const userId = localStorage.getItem("studyArena_userId");
   const username = localStorage.getItem("studyArena_username");
+
+  /**
+   * Initialize Socket.IO connection
+   */
+  useEffect(() => {
+    console.log("🔌 Connecting to Socket.IO...");
+
+    socketRef.current = io(SOCKET_URL, {
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    });
+
+    const socket = socketRef.current;
+
+    // Connection handlers
+    socket.on("connect", () => {
+      console.log("✅ Socket connected:", socket.id);
+      setIsConnected(true);
+
+      // Join the room
+      socket.emit("room:join", { roomId, userId, userName: username });
+    });
+
+    socket.on("disconnect", () => {
+      console.log("❌ Socket disconnected");
+      setIsConnected(false);
+    });
+
+    socket.on("connect_error", (error) => {
+      console.error("❌ Connection error:", error);
+      setIsConnected(false);
+    });
+
+    // Load chat history
+    socket.on("chat:history", ({ messages: historyMessages }) => {
+      console.log("📜 Loaded chat history:", historyMessages.length, "messages");
+      setMessages(historyMessages);
+    });
+
+    // Receive new user message
+    socket.on("chat:message", (message) => {
+      console.log("💬 New message:", message);
+      setMessages((prev) => [...prev, message]);
+    });
+
+    // Receive AI response
+    socket.on("chat:aiResponse", (message) => {
+      console.log("🤖 AI response:", message);
+      setMessages((prev) => [...prev, message]);
+      setIsSending(false);
+    });
+
+    // Typing indicator from other users
+    socket.on("chat:userTyping", ({ userId: typingUserId, userName, isTyping: typing }) => {
+      if (typing && typingUserId !== userId) {
+        setTypingUser(userName);
+      } else {
+        setTypingUser(null);
+      }
+    });
+
+    // User joined notification
+    socket.on("room:userJoined", ({ userName }) => {
+      console.log("👤 User joined:", userName);
+      setJoinNotification(`${userName} joined the room`);
+      setTimeout(() => setJoinNotification(null), 3000);
+    });
+
+    // User left notification
+    socket.on("room:userLeft", ({ userName }) => {
+      console.log("👋 User left:", userName);
+      setJoinNotification(`${userName} left the room`);
+      setTimeout(() => setJoinNotification(null), 3000);
+    });
+
+    // Error handling
+    socket.on("error", (error) => {
+      console.error("❌ Socket error:", error);
+    });
+
+    return () => {
+      console.log("🔌 Disconnecting socket...");
+      socket.emit("room:leave", { roomId, userId, userName: username });
+      socket.off();
+      socket.disconnect();
+    };
+  }, [roomId, userId, username]);
+
+  /**
+   * Firebase RTDB typing indicator (ultra-fast)
+   * Path: rooms/<roomId>/typing/<userId>
+   */
+  useEffect(() => {
+    const typingRef = ref(db, `rooms/${roomId}/typing`);
+
+    const unsubscribe = onValue(typingRef, (snapshot) => {
+      const typingData = snapshot.val();
+      if (typingData) {
+        // Find first user who is typing (not current user)
+        const typingUserId = Object.keys(typingData).find(
+          (id) => id !== userId && typingData[id]
+        );
+        
+        if (typingUserId) {
+          // Get username from typing data or use "Someone"
+          const typingUserName = typingData[typingUserId]?.username || "Someone";
+          setTypingUser(typingUserName);
+        } else {
+          setTypingUser(null);
+        }
+      } else {
+        setTypingUser(null);
+      }
+    });
+
+    return () => {
+      // Clear own typing indicator on unmount
+      const myTypingRef = ref(db, `rooms/${roomId}/typing/${userId}`);
+      set(myTypingRef, null);
+      off(typingRef, "value", unsubscribe);
+    };
+  }, [roomId, userId]);
 
   /**
    * Auto-scroll to bottom when new messages arrive
@@ -25,132 +157,80 @@ export default function GroupChat({ roomId }) {
   }, [messages]);
 
   /**
-   * Listen to messages from Firebase RTDB
-   * Path: rooms/<roomId>/messages
+   * Handle typing with debouncing for Firebase RTDB
    */
-  useEffect(() => {
-    const messagesRef = ref(db, `rooms/${roomId}/messages`);
-    
-    const unsubscribe = onValue(messagesRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const messagesList = Object.entries(data).map(([id, msg]) => ({
-          id,
-          ...msg,
-        }));
-        messagesList.sort((a, b) => a.timestamp - b.timestamp);
-        setMessages(messagesList);
-      } else {
-        setMessages([]);
-      }
-    });
-
-    return () => unsubscribe();
-  }, [roomId]);
-
-  /**
-   * Listen to typing indicators
-   * Path: rooms/<roomId>/typing
-   */
-  useEffect(() => {
-    const typingRef = ref(db, `rooms/${roomId}/typing`);
-    
-    const unsubscribe = onValue(typingRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        // Filter out current user
-        const otherUsers = Object.entries(data)
-          .filter(([id, isTyping]) => id !== userId && isTyping)
-          .map(([id]) => id);
-        setTypingUsers(otherUsers);
-      } else {
-        setTypingUsers([]);
-      }
-    });
-
-    return () => unsubscribe();
-  }, [roomId, userId]);
-
-  /**
-   * Handle typing indicator
-   */
-  const handleTyping = (typing) => {
+  const handleTypingChange = (isTypingNow) => {
     const typingRef = ref(db, `rooms/${roomId}/typing/${userId}`);
-    set(typingRef, typing);
+
+    if (isTypingNow) {
+      // Set typing to true with username
+      set(typingRef, { username, isTyping: true });
+
+      // Emit typing status via Socket.IO for backup
+      if (socketRef.current?.connected) {
+        socketRef.current.emit("chat:typing", {
+          roomId,
+          userId,
+          userName: username,
+          isTyping: true,
+        });
+      }
+
+      // Clear previous timeout
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+
+      // Set new timeout to clear typing indicator
+      typingTimeoutRef.current = setTimeout(() => {
+        set(typingRef, null);
+        if (socketRef.current?.connected) {
+          socketRef.current.emit("chat:typing", {
+            roomId,
+            userId,
+            userName: username,
+            isTyping: false,
+          });
+        }
+      }, 2000);
+    } else {
+      // Clear typing immediately
+      set(typingRef, null);
+      if (socketRef.current?.connected) {
+        socketRef.current.emit("chat:typing", {
+          roomId,
+          userId,
+          userName: username,
+          isTyping: false,
+        });
+      }
+    }
   };
 
   /**
-   * Send message to queue and process with LLM
-   * 
-   * Flow:
-   * 1. User sends message -> push to queue
-   * 2. Queue listener (backend) picks up message
-   * 3. Backend processes with Groq API
-   * 4. Backend pushes response to messages
-   * 
-   * For now: Mock LLM response after 2 seconds
+   * Send message via Socket.IO
+   * Backend will save to MongoDB and get AI response
    */
   const handleSendMessage = async () => {
-    if (!inputValue.trim() || isSending) return;
+    if (!inputValue.trim() || isSending || !socketRef.current?.connected) return;
 
-    const userMessage = inputValue.trim();
+    const messageText = inputValue.trim();
     setInputValue("");
     setIsSending(true);
-    handleTyping(false);
+    handleTypingChange(false);
 
     try {
-      // 1. Add user message to messages
-      const messagesRef = ref(db, `rooms/${roomId}/messages`);
-      const userMsgRef = push(messagesRef);
-      
-      await set(userMsgRef, {
+      // Send message via Socket.IO
+      socketRef.current.emit("chat:send", {
+        roomId,
         userId,
-        username,
-        message: userMessage,
-        type: "user",
-        timestamp: Date.now(),
+        userName: username,
+        text: messageText,
       });
 
-      // 2. Push to queue for LLM processing
-      const queueRef = ref(db, `rooms/${roomId}/queue`);
-      const queueMsgRef = push(queueRef);
-      
-      await set(queueMsgRef, {
-        userId,
-        username,
-        message: userMessage,
-        timestamp: Date.now(),
-        status: "pending",
-      });
-
-      // TODO: Integrate Groq API here
-      // The backend should listen to queue and process messages
-      // For now, simulate LLM response after 2 seconds
-      
-      setTimeout(async () => {
-        const mockResponses = [
-          "That's an interesting point! Let me help you understand this concept better. In simple terms, this relates to the fundamental principles we discussed earlier.",
-          "Great question! To break this down: First, consider the core concept. Then, think about how it applies to your specific scenario. Finally, practice with examples.",
-          "I can help with that! Here's a detailed explanation: The key is to understand the underlying mechanism and how different components interact with each other.",
-          "Let me clarify this for you. This concept is essential because it forms the foundation for more advanced topics. Think of it as building blocks.",
-        ];
-
-        const aiResponse = mockResponses[Math.floor(Math.random() * mockResponses.length)];
-        
-        const aiMsgRef = push(messagesRef);
-        await set(aiMsgRef, {
-          userId: "ai_assistant",
-          username: "AI Study Assistant",
-          message: aiResponse,
-          type: "assistant",
-          timestamp: Date.now(),
-        });
-
-        setIsSending(false);
-      }, 2000);
-
-    } catch (err) {
-      console.error("Error sending message:", err);
+      console.log("📤 Message sent:", messageText);
+    } catch (error) {
+      console.error("❌ Error sending message:", error);
       setIsSending(false);
     }
   };
@@ -172,12 +252,26 @@ export default function GroupChat({ roomId }) {
     <div className="flex flex-col h-full bg-bgDark2/40 backdrop-blur-xl rounded-2xl border border-white/10">
       {/* Chat Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-bgDark3/30">
-        <div>
-          <h2 className="text-lg font-bold text-white flex items-center gap-2">
-            <Bot className="w-5 h-5 text-neonPurple" />
-            Shared AI Chat
-          </h2>
-          <p className="text-xs text-white/60">Collaborative learning space</p>
+        <div className="flex items-center gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <Bot className="w-5 h-5 text-neonPurple" />
+              Shared AI Chat
+            </h2>
+            <p className="text-xs text-white/60 flex items-center gap-2">
+              {isConnected ? (
+                <>
+                  <Wifi className="w-3 h-3 text-green-400" />
+                  <span className="text-green-400">Connected</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="w-3 h-3 text-red-400" />
+                  <span className="text-red-400">Disconnected</span>
+                </>
+              )}
+            </p>
+          </div>
         </div>
         <button
           onClick={copyRoomCode}
@@ -211,18 +305,18 @@ export default function GroupChat({ roomId }) {
             </motion.div>
             <p className="text-white/60 mb-2">Start your collaborative study session</p>
             <p className="text-xs text-white/40">
-              Messages are synced in real-time with all room members
+              Real-time AI assistant powered by Gemini & Groq
             </p>
           </div>
         ) : (
           <>
             {messages.map((message, index) => {
-              const isAssistant = message.type === "assistant";
+              const isAssistant = message.sender === "assistant";
               const isCurrentUser = message.userId === userId;
 
               return (
                 <motion.div
-                  key={message.id}
+                  key={message._id || index}
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3, delay: index * 0.05 }}
@@ -248,9 +342,11 @@ export default function GroupChat({ roomId }) {
                   {/* Message Bubble */}
                   <div className={`max-w-[75%] ${isCurrentUser && !isAssistant ? "items-end" : "items-start"}`}>
                     {/* Username */}
-                    <p className={`text-xs text-white/60 mb-1 px-1 ${isCurrentUser && !isAssistant ? "text-right" : "text-left"}`}>
-                      {message.username}
-                    </p>
+                    {!isAssistant && (
+                      <p className={`text-xs text-white/60 mb-1 px-1 ${isCurrentUser ? "text-right" : "text-left"}`}>
+                        {message.userName || message.username || "User"}
+                      </p>
+                    )}
 
                     {/* Message Content */}
                     <div
@@ -263,7 +359,7 @@ export default function GroupChat({ roomId }) {
                       }`}
                     >
                       <p className="text-white/90 text-sm leading-relaxed whitespace-pre-wrap">
-                        {message.message}
+                        {message.text || message.message}
                       </p>
                     </div>
 
@@ -279,8 +375,8 @@ export default function GroupChat({ roomId }) {
               );
             })}
 
-            {/* Typing Indicators */}
-            {typingUsers.length > 0 && (
+            {/* Typing Indicator */}
+            {typingUser && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -290,6 +386,7 @@ export default function GroupChat({ roomId }) {
                   <Loader2 className="w-5 h-5 text-white/60 animate-spin" />
                 </div>
                 <div className="bg-bgDark3/50 border border-white/10 px-4 py-3 rounded-2xl rounded-tl-sm">
+                  <p className="text-xs text-white/60 mb-2">{typingUser} is typing...</p>
                   <div className="flex gap-2">
                     <motion.div
                       animate={{ scale: [1, 1.2, 1] }}
@@ -316,33 +413,57 @@ export default function GroupChat({ roomId }) {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* LLM Backend Status Banner */}
-      <div className="px-6 py-2 bg-orange-500/10 border-t border-orange-500/30">
-        <p className="text-xs text-orange-400 text-center">
-          ⚠️ Waiting for LLM backend connection… (Using mock responses)
-        </p>
-      </div>
-
       {/* Input Area */}
       <div className="px-4 pb-4">
+        {!isConnected && (
+          <div className="mb-2 px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg">
+            <p className="text-xs text-red-400 text-center">
+              ⚠️ Reconnecting to server...
+            </p>
+          </div>
+        )}
+        
+        {joinNotification && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="mb-2 px-4 py-2 bg-green-500/10 border border-green-500/30 rounded-lg"
+          >
+            <p className="text-xs text-green-400 text-center flex items-center justify-center gap-2">
+              <UserIcon className="w-3 h-3" />
+              {joinNotification}
+            </p>
+          </motion.div>
+        )}
+        
+        {typingUser && (
+          <div className="mb-2 px-4 py-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+            <p className="text-xs text-yellow-400 text-center">
+              {typingUser} is typing... (input disabled)
+            </p>
+          </div>
+        )}
+
         <div className="flex items-end gap-2 bg-bgDark3/50 backdrop-blur-xl rounded-xl border border-white/10 p-3 focus-within:border-neonPurple/40 transition-colors duration-300">
           <textarea
             ref={inputRef}
             value={inputValue}
             onChange={(e) => {
               setInputValue(e.target.value);
-              handleTyping(e.target.value.length > 0);
+              handleTypingChange(e.target.value.length > 0);
             }}
             onKeyPress={handleKeyPress}
-            placeholder="Ask a question or share your thoughts..."
+            placeholder={typingUser ? `${typingUser} is typing...` : "Ask a question or share your thoughts..."}
             rows={1}
-            className="flex-1 bg-transparent text-white placeholder:text-white/40 outline-none resize-none max-h-32 px-2 py-2"
+            disabled={!isConnected || !!typingUser}
+            className="flex-1 bg-transparent text-white placeholder:text-white/40 outline-none resize-none max-h-32 px-2 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ minHeight: "36px" }}
           />
 
           <button
             onClick={handleSendMessage}
-            disabled={!inputValue.trim() || isSending}
+            disabled={!inputValue.trim() || isSending || !isConnected || !!typingUser}
             className="flex-shrink-0 w-10 h-10 rounded-lg bg-gradient-to-br from-neonPink to-neonPurple hover:from-neonPink/80 hover:to-neonPurple/80 disabled:from-white/10 disabled:to-white/10 border border-neonPink/40 disabled:border-white/10 flex items-center justify-center transition-all duration-300 disabled:cursor-not-allowed"
           >
             {isSending ? (

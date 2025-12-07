@@ -111,7 +111,13 @@ export default function Register() {
       } else if (err.code === "auth/operation-not-allowed") {
         setError("Email/password accounts are not enabled. Please contact support.");
       } else if (err.message?.includes("Failed to create user profile")) {
-        setError("Account created but profile setup failed. Please contact support.");
+        setError(`Profile setup failed: ${err.message}. Please try again or contact support.`);
+      } else if (err.message?.includes("Profile already exists")) {
+        setError("Your account already exists. Please login instead.");
+      } else if (err.message?.includes("Validation failed")) {
+        setError(`Invalid data: ${err.message}. Please check your information.`);
+      } else if (err.message?.includes("Not authenticated")) {
+        setError("Authentication failed. Please try logging in again.");
       } else {
         setError(err.message || "Registration failed. Please try again.");
       }

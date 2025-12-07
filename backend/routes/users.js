@@ -21,7 +21,7 @@ router.get('/:uid', async (req, res) => {
     let mongoDocument = mongoUser;
 
     if (!mongoDocument) {
-      mongoDocument = await User.findById(uid).lean().catch(() => null);
+      mongoDocument = await User.findOne({ uid }).lean().catch(() => null);
     }
 
     if (!firebaseUser && !mongoDocument && !firestoreDoc?.exists) {
@@ -150,7 +150,7 @@ router.post('/:id/onboarding', async (req, res) => {
     
     // If not found, try MongoDB ObjectId
     if (!user) {
-      user = await User.findById(id);
+      user = await User.findOne({ uid: id });
     }
     
     if (!user) {
@@ -205,7 +205,7 @@ router.delete('/:id', async (req, res) => {
     
     // If not found, try MongoDB ObjectId
     if (!user) {
-      user = await User.findByIdAndDelete(id);
+      user = await User.findOneAndDelete({ uid: id });
     }
     
     if (!user) {

@@ -3,10 +3,12 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createServer } from 'http';
 import connectDB from './config/db.js';
 import { initializeFirebaseAdmin } from './config/firebaseAdmin.js';
 import { initializeGroqClient } from './services/groqService.js';
 import { initializeGeminiClient } from './utils/geminiClient.js';
+import { initializeSocketIO } from './config/socket.js';
 
 // Import NEW user-scoped routes
 import profileRoutes from './routes/profileRoutes.js';
@@ -18,6 +20,9 @@ import attendanceRoutes from './routes/attendanceRoutes.js';
 // Import legacy routes (kept for backwards compatibility)
 import apiRoutes from './routes/apiRoutes.js';
 import aiAttendanceRoutes from './routes/aiAttendance.js';
+
+// Import study room chat routes
+import studyRoomChatRoutes from './routes/studyRoomChatRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -121,6 +126,7 @@ app.use('/api/survival', survivalRoutes);
 app.use('/api/notes', notesRoutes);
 app.use('/api/questions', questionsRoutes);
 app.use('/api/attendance', attendanceRoutes);
+app.use('/api/study-room-chat', studyRoomChatRoutes);
 
 // Legacy routes (kept for backwards compatibility)
 app.use('/api', apiRoutes);
@@ -206,17 +212,31 @@ app.use((err, req, res, next) => {
   });
 });
 
+// Create HTTP server
+const httpServer = createServer(app);
+
+// Initialize Socket.IO
+try {
+  initializeSocketIO(httpServer);
+  console.log('🔌 WebSocket server ready for Study Arena\n');
+} catch (socketError) {
+  console.error('❌ Socket.IO initialization failed:', socketError.message);
+  console.warn('⚠️  Study Arena chat will not work.\n');
+}
+
 // Start server
-const server = app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`📍 Health check: http://localhost:${PORT}/health`);
-  console.log(`📍 API base: http://localhost:${PORT}/api\n`);
+  console.log(`📍 API base: http://localhost:${PORT}/api`);
+  console.log(`🔌 WebSocket: ws://localhost:${PORT}\n`);
   console.log('🔒 USER-SCOPED API (Firebase Auth Required):');
   console.log('  📋 Profile: /api/profile');
   console.log('  🛡️  Survival Kit: /api/survival');
   console.log('  📝 Notes Repository: /api/notes');
   console.log('  ❓ Questions Generator: /api/questions');
-  console.log('  📊 Attendance Advisor: /api/attendance\n');
+  console.log('  📊 Attendance Advisor: /api/attendance');
+  console.log('  💬 Study Arena Chat: /socket.io (WebSocket)\n');
   console.log('✨ All user data persists across logout/login');
   console.log('✨ Each user has isolated dataset in MongoDB\n');
 });
@@ -224,7 +244,7 @@ const server = app.listen(PORT, () => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('\n🛑 SIGTERM received, shutting down gracefully...');
-  server.close(() => {
+  httpServer.close(() => {
     console.log('✅ Server closed');
     process.exit(0);
   });
@@ -232,7 +252,7 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   console.log('\n🛑 SIGINT received, shutting down gracefully...');
-  server.close(() => {
+  httpServer.close(() => {
     console.log('✅ Server closed');
     process.exit(0);
   });

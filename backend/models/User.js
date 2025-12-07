@@ -19,8 +19,13 @@ const userSchema = new mongoose.Schema({
     fullName: { type: String, default: '' },
     email: { type: String, required: true },
     photoURL: { type: String, default: '' },
+    phone: { type: String, default: '' },
+    department: { type: String, default: '' },
+    year: { type: String, default: '' },
+    collegeName: { type: String, default: '' },
     course: { type: String, default: '' },
     semester: { type: String, default: '' },
+    age: { type: Number, default: null },
     updatedAt: { type: Date, default: Date.now }
   },
   

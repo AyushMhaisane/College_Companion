@@ -5,6 +5,116 @@ import { verifyFirebaseToken } from '../middleware/auth.js';
 const router = express.Router();
 
 /**
+ * POST /api/profile/setup
+ * Create initial user profile after Firebase registration
+ * Called during user onboarding
+ */
+router.post('/setup', verifyFirebaseToken, async (req, res) => {
+  try {
+    const { uid, email } = req.user;
+    const { name, fullName, phone, department, year, collegeName, degree, age } = req.body;
+
+    console.log('📝 Profile setup request for UID:', uid);
+    console.log('📝 Request data:', { name, fullName, email, phone, department, year, collegeName, degree, age });
+
+    // Check if user already exists
+    let user = await User.findOne({ uid });
+    
+    if (user) {
+      console.log('✅ User already exists, updating profile...');
+      // Update existing profile
+      user.profile.fullName = fullName || name || user.profile.fullName;
+      if (email) user.profile.email = email;
+      if (phone) user.profile.phone = phone;
+      if (department) user.profile.department = department;
+      if (year) user.profile.year = year;
+      if (collegeName) user.profile.collegeName = collegeName;
+      if (degree) user.profile.course = degree;
+      if (age) user.profile.age = age;
+      user.profile.updatedAt = new Date();
+      
+      await user.save();
+      
+      return res.json({
+        success: true,
+        message: 'Profile updated successfully',
+        profile: user.profile,
+        isNewUser: false
+      });
+    }
+
+    // Create new user profile
+    console.log('🆕 Creating new user profile...');
+    user = new User({
+      uid,
+      profile: {
+        fullName: fullName || name || '',
+        email: email || '',
+        phone: phone || '',
+        department: department || '',
+        year: year || '',
+        collegeName: collegeName || '',
+        course: degree || '',
+        age: age || null,
+        photoURL: '',
+        semester: '',
+        updatedAt: new Date()
+      }
+    });
+
+    await user.save();
+    console.log('✅ User profile created successfully:', uid);
+
+    res.json({
+      success: true,
+      message: 'Profile created successfully',
+      profile: user.profile,
+      isNewUser: true
+    });
+
+  } catch (error) {
+    console.error('❌ Profile setup error:', error);
+    console.error('❌ Error stack:', error.stack);
+    console.error('❌ Error details:', {
+      name: error.name,
+      message: error.message,
+      code: error.code
+    });
+    
+    // MongoDB duplicate key error
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        error: 'Profile already exists',
+        message: 'A profile with this UID already exists in the database',
+        details: error.message
+      });
+    }
+    
+    // MongoDB validation error
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        message: 'Invalid profile data provided',
+        details: Object.keys(error.errors).map(key => ({
+          field: key,
+          message: error.errors[key].message
+        }))
+      });
+    }
+    
+    // Generic error
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create profile',
+      message: error.message,
+      details: 'Check server logs for more information'
+    });
+  }
+});
+
+/**
  * GET /api/profile
  * Get current user's profile
  */

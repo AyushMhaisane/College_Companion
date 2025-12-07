@@ -110,25 +110,41 @@ export const AuthProvider = ({ children }) => {
 
   // Create or update user profile in MongoDB
   const createUserProfile = async (userId, profileData) => {
-    const response = await fetch("/api/users", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        firebaseUID: userId, 
-        ...profileData 
-      }),
-    });
-    
-    if (!response.ok) {
-      throw new Error("Failed to create user profile");
+    try {
+      // Get Firebase auth token
+      const token = await currentUser?.getIdToken();
+      
+      if (!token) {
+        throw new Error("Not authenticated. Please login again.");
+      }
+
+      const response = await fetch("http://localhost:5000/api/profile/setup", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify(profileData),
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        console.error("❌ Profile setup failed:", data);
+        throw new Error(data.message || data.error || "Failed to create user profile");
+      }
+      
+      if (data.success && data.profile) {
+        console.log("✅ Profile created successfully:", data.profile);
+        setUserProfile(data.profile);
+        return data.profile;
+      }
+      
+      throw new Error("Invalid response from server");
+    } catch (error) {
+      console.error("❌ createUserProfile error:", error);
+      throw error;
     }
-    
-    const data = await response.json();
-    if (data.success && data.user) {
-      setUserProfile(data.user);
-      return data.user;
-    }
-    throw new Error("Invalid response from server");
   };
 
   // Save onboarding data

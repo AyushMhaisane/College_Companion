@@ -25,7 +25,7 @@ export const generateQuestions = async (req, res) => {
 
     let user = await User.findById(uid);
     if (!user) {
-      user = new User({ _id: uid, profile: { email: req.user.email } });
+      user = new User({ uid, profile: { email: req.user.email } });
     }
 
     user.questionHistory.push({
@@ -61,7 +61,7 @@ export const generateSurvivalPlan = async (req, res) => {
 
     let user = await User.findById(uid);
     if (!user) {
-      user = new User({ _id: uid, profile: { email: req.user.email } });
+      user = new User({ uid, profile: { email: req.user.email } });
     }
 
     user.survivalPlans.push({
@@ -96,7 +96,7 @@ export const attendanceQuery = async (req, res) => {
 
     let user = await User.findById(uid);
     if (!user) {
-      user = new User({ _id: uid, profile: { email: req.user.email } });
+      user = new User({ uid, profile: { email: req.user.email } });
     }
 
     user.attendanceQueries.push({
@@ -136,7 +136,7 @@ export const extractEssentials = async (req, res) => {
 
     let user = await User.findById(uid);
     if (!user) {
-      user = new User({ _id: uid, profile: { email: req.user.email } });
+      user = new User({ uid, profile: { email: req.user.email } });
     }
 
     user.essentials.push({
@@ -172,7 +172,7 @@ export const generateRevisionPlan = async (req, res) => {
 
     let user = await User.findById(uid);
     if (!user) {
-      user = new User({ _id: uid, profile: { email: req.user.email } });
+      user = new User({ uid, profile: { email: req.user.email } });
     }
 
     user.revisionPlans.push({
@@ -208,7 +208,7 @@ export const askDoubt = async (req, res) => {
 
     let user = await User.findById(uid);
     if (!user) {
-      user = new User({ _id: uid, profile: { email: req.user.email } });
+      user = new User({ uid, profile: { email: req.user.email } });
     }
 
     user.savedChats.push({
@@ -243,7 +243,7 @@ export const createNote = async (req, res) => {
 
     let user = await User.findById(uid);
     if (!user) {
-      user = new User({ _id: uid, profile: { email: req.user.email } });
+      user = new User({ uid, profile: { email: req.user.email } });
     }
 
     const note = {

@@ -9,7 +9,7 @@ export const createUser = async (req, res) => {
     const { uid, email, name } = req.user;
     
     // Check if user already exists
-    const existingUser = await User.findById(uid);
+    const existingUser = await User.findOne({ uid });
     if (existingUser) {
       return res.json({
         success: true,

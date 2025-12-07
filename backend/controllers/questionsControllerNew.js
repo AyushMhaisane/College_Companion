@@ -24,7 +24,7 @@ export const generateQuestions = async (req, res) => {
     const result = await generateQuestionsAI(syllabus, questionType);
 
     // Find or create user
-    let user = await User.findById(uid);
+    let user = await User.findOne({ uid });
     if (!user) {
       user = new User({
         _id: uid,
